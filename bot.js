@@ -178,13 +178,26 @@ async function textToVoice(text, chatId) {
 
   await tts.ttsPromise(text, mp3Path);
 
+  const mp3Size = fs.statSync(mp3Path).size;
+  console.log(`[TTS] MP3 生成完毕: ${mp3Path}, ${mp3Size} bytes`);
+  if (mp3Size < 100) {
+    throw new Error(`MP3 文件太小 (${mp3Size} bytes)，TTS 可能失败了`);
+  }
+
   // MP3 -> OGG/OPUS (Telegram 语音条格式)
   await new Promise((resolve, reject) => {
     ffmpeg(mp3Path)
       .audioCodec('libopus')
       .format('ogg')
-      .on('end', resolve)
-      .on('error', reject)
+      .on('end', () => {
+        const oggSize = fs.statSync(oggPath).size;
+        console.log(`[TTS] OGG 转换完毕: ${oggPath}, ${oggSize} bytes`);
+        resolve();
+      })
+      .on('error', (err) => {
+        console.error(`[TTS] ffmpeg 错误:`, err.message);
+        reject(err);
+      })
       .save(oggPath);
   });
 
