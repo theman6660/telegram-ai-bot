@@ -1,0 +1,16 @@
+{
+  "name": "telegram-ai-bot",
+  "version": "1.0.0",
+  "description": "Telegram AI chatbot powered by Xiaomi MiMo",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.92.0",
+    "dotenv": "^16.4.0",
+    "https-proxy-agent": "^9.0.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "openai": "^4.73.0"
+  }
+}
