@@ -16,9 +16,10 @@ if (process.platform === 'win32') {
   }
 }
 
+const PROXY = (process.env.PROXY_URL || '').trim();
 const botOptions = { polling: true };
-if (process.env.PROXY_URL) {
-  botOptions.request = { agent: new HttpsProxyAgent(process.env.PROXY_URL) };
+if (PROXY) {
+  botOptions.request = { agent: new HttpsProxyAgent(PROXY) };
 }
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, botOptions);
 const client = new Anthropic({
@@ -172,7 +173,7 @@ async function textToVoice(text, chatId) {
     outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
     rate: '+5%',
     pitch: '+5%',
-    proxy: process.env.PROXY_URL || undefined,
+    proxy: PROXY || undefined,
     timeout: 15000,
   });
 
