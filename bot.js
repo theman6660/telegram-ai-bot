@@ -252,6 +252,8 @@ bot.on('message', async (msg) => {
 
   if (!text || text.startsWith('/')) return;
 
+  console.log(`[收到消息] chatId=${chatId}: ${text}`);
+
   const history = getHistory(chatId);
   history.push({ role: 'user', content: text });
   if (history.length > 100) history.splice(0, history.length - 100);
@@ -260,6 +262,7 @@ bot.on('message', async (msg) => {
 
   try {
     bot.sendChatAction(chatId, 'typing');
+    console.log(`[API请求] 正在调用 ${process.env.ANTHROPIC_MODEL}...`);
 
     const systemPrompt = buildSystemPrompt(chatId);
     const response = await client.messages.create({
@@ -270,7 +273,7 @@ bot.on('message', async (msg) => {
     });
 
     const reply = extractText(response.content);
-    console.log(`[收到回复] ${reply || '(空)'}`);
+    console.log(`[API响应] ${reply || '(空)'}`);
     if (!reply) return;
     if (reply.trim() === '[已读不回]') {
       console.log(`[已读不回] 故意不理他`);
@@ -282,7 +285,7 @@ bot.on('message', async (msg) => {
     // 后台更新记忆
     updateMemory(chatId, history);
   } catch (err) {
-    console.error('API error:', err.message);
+    console.error('[API错误]', err.message);
     bot.sendMessage(chatId, '哼，网络出问题了啦，等一下再跟你说');
   }
 });
