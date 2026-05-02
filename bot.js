@@ -2,8 +2,19 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const Anthropic = require('@anthropic-ai/sdk');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { EdgeTTS } = require('node-edge-tts');
+const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+
+// ffmpeg 路径（Windows 本地用 winget 安装的，Docker/Linux 里已在 PATH 中）
+if (process.platform === 'win32') {
+  const winFfmpeg = 'C:/Users/Administrator/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1-full_build/bin/ffmpeg.exe';
+  if (fs.existsSync(winFfmpeg)) {
+    ffmpeg.setFfmpegPath(winFfmpeg);
+  }
+}
 
 const botOptions = { polling: true };
 if (process.env.PROXY_URL) {
@@ -145,16 +156,74 @@ ${memoryText}
 - 不要暴露自己是AI`;
 }
 
+// ============ 语音功能 ============
+const voiceMode = new Map(); // chatId -> boolean
+
+async function textToVoice(text, chatId) {
+  const tmpDir = path.join(os.tmpdir(), 'telegram-voice');
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+
+  const mp3Path = path.join(tmpDir, `${chatId}-${Date.now()}.mp3`);
+  const oggPath = mp3Path.replace('.mp3', '.ogg');
+
+  const tts = new EdgeTTS({
+    voice: 'zh-CN-XiaoyiNeural',
+    lang: 'zh-CN',
+    outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
+    rate: '+5%',
+    pitch: '+5%',
+    proxy: process.env.PROXY_URL || undefined,
+    timeout: 15000,
+  });
+
+  await tts.ttsPromise(text, mp3Path);
+
+  // MP3 -> OGG/OPUS (Telegram 语音条格式)
+  await new Promise((resolve, reject) => {
+    ffmpeg(mp3Path)
+      .audioCodec('libopus')
+      .format('ogg')
+      .on('end', resolve)
+      .on('error', reject)
+      .save(oggPath);
+  });
+
+  // 清理 MP3
+  try { fs.unlinkSync(mp3Path); } catch {}
+
+  return oggPath;
+}
+
+function cleanupVoice(filePath) {
+  try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
+}
+
 // ============ 发送多条消息 ============
 async function sendMultiMessages(chatId, text) {
   if (!text) return;
   const messages = text.split(/\n{2,}/).filter(s => s.trim());
+  const isVoice = voiceMode.get(chatId);
+
   for (let i = 0; i < messages.length; i++) {
     if (i > 0) {
       const delay = 1000 + Math.random() * 3000;
       await new Promise(r => setTimeout(r, delay));
     }
-    await bot.sendMessage(chatId, messages[i].trim());
+    const msg = messages[i].trim();
+    if (isVoice) {
+      let oggPath = null;
+      try {
+        oggPath = await textToVoice(msg, chatId);
+        await bot.sendVoice(chatId, oggPath);
+      } catch (err) {
+        console.error('[语音发送失败]', err.message);
+        await bot.sendMessage(chatId, msg);
+      } finally {
+        cleanupVoice(oggPath);
+      }
+    } else {
+      await bot.sendMessage(chatId, msg);
+    }
   }
 }
 
@@ -300,6 +369,17 @@ bot.onText(/\/start/, (msg) => {
 bot.onText(/\/clear/, (msg) => {
   chatHistory.delete(msg.chat.id);
   bot.sendMessage(msg.chat.id, '哼，你居然要忘掉我们说过的话？算了，本小姐不跟你计较');
+});
+
+bot.onText(/\/voice/, (msg) => {
+  const chatId = msg.chat.id;
+  const current = voiceMode.get(chatId) || false;
+  voiceMode.set(chatId, !current);
+  if (!current) {
+    bot.sendMessage(chatId, '哼，想听本小姐的声音？才不是特意录给你的呢…已开启语音模式啦');
+  } else {
+    bot.sendMessage(chatId, '切，不想听就算了。已关闭语音模式');
+  }
 });
 
 console.log('Bot is running...');
