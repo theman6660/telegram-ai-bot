@@ -203,6 +203,7 @@ async function sendMultiMessages(chatId, text) {
   if (!text) return;
   const messages = text.split(/\n{2,}/).filter(s => s.trim());
   const isVoice = voiceMode.get(chatId);
+  console.log(`[发送消息] chatId=${chatId}, 语音模式=${isVoice}, 消息数=${messages.length}`);
 
   for (let i = 0; i < messages.length; i++) {
     if (i > 0) {
@@ -375,6 +376,7 @@ bot.onText(/\/voice/, (msg) => {
   const chatId = msg.chat.id;
   const current = voiceMode.get(chatId) || false;
   voiceMode.set(chatId, !current);
+  console.log(`[语音模式] chatId=${chatId}: ${current ? '关闭' : '开启'}`);
   if (!current) {
     bot.sendMessage(chatId, '哼，想听本小姐的声音？才不是特意录给你的呢…已开启语音模式啦');
   } else {
