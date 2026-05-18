@@ -1,6 +1,7 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const Anthropic = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { ProxyAgent, setGlobalDispatcher } = require('undici');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { EdgeTTS } = require('node-edge-tts');
 const ffmpeg = require('fluent-ffmpeg');
@@ -20,12 +21,11 @@ const PROXY = (process.env.PROXY_URL || '').trim();
 const botOptions = { polling: true };
 if (PROXY) {
   botOptions.request = { agent: new HttpsProxyAgent(PROXY) };
+  setGlobalDispatcher(new ProxyAgent(PROXY));
 }
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, botOptions);
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_AUTH_TOKEN,
-  baseURL: process.env.ANTHROPIC_BASE_URL,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const geminiModel = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' });
 
 const MEMORY_DIR = path.join(__dirname, 'memory');
 if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR);
@@ -80,12 +80,8 @@ ${recentMessages}
 如果没有新信息，输出：无`;
 
   try {
-    const response = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL,
-      max_tokens: 200,
-      messages: [{ role: 'user', content: prompt }],
-    });
-    const result = extractText(response.content);
+    const result_obj = await geminiModel.generateContent(prompt);
+    const result = result_obj.response.text();
     if (result && result !== '无') {
       const newFacts = result.split('\n').filter(f => f.trim() && !f.startsWith('已'));
       memory.facts = [...new Set([...memory.facts, ...newFacts])].slice(-30);
@@ -250,6 +246,13 @@ function extractText(content) {
   return lastBlock && lastBlock.text ? lastBlock.text : '';
 }
 
+function toGeminiHistory(history) {
+  return history.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
+}
+
 // ============ 状态追踪 ============
 const chatHistory = new Map();
 const lastActive = new Map();
@@ -302,12 +305,8 @@ async function sendProactiveMessage(chatId) {
 - 直接发消息内容，不要加任何解释`;
 
   try {
-    const response = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL,
-      max_tokens: 150,
-      messages: [{ role: 'user', content: prompt }],
-    });
-    const reply = extractText(response.content);
+    const result_obj = await geminiModel.generateContent(prompt);
+    const reply = result_obj.response.text();
     await sendMultiMessages(chatId, reply);
     console.log(`[主动消息] -> ${chatId}: ${reply}`);
   } catch (err) {
@@ -346,17 +345,18 @@ bot.on('message', async (msg) => {
 
   try {
     bot.sendChatAction(chatId, 'typing');
-    console.log(`[API请求] 正在调用 ${process.env.ANTHROPIC_MODEL}...`);
+    console.log(`[API请求] 正在调用 ${process.env.GEMINI_MODEL || 'gemini-2.5-flash'}...`);
 
     const systemPrompt = buildSystemPrompt(chatId);
-    const response = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL,
-      max_tokens: 300,
-      system: systemPrompt,
-      messages: validHistory,
-    });
+    const geminiHistory = toGeminiHistory(validHistory.slice(0, -1));
+    const lastMsg = validHistory[validHistory.length - 1];
 
-    const reply = extractText(response.content);
+    const chat = geminiModel.startChat({
+      systemInstruction: systemPrompt,
+      history: geminiHistory,
+    });
+    const result = await chat.sendMessage(lastMsg.content);
+    const reply = result.response.text();
     console.log(`[API响应] ${reply || '(空)'}`);
     if (!reply) return;
     if (reply.trim() === '[已读不回]') {
